@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/network"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // RedactURLForError reduces a resource URL to the part that is safe to echo back in an
@@ -96,6 +97,9 @@ func FetchAndEncodeURL(ctx context.Context, resourceURL string) (mediaType strin
 		},
 	}
 
+	// URL inputs are preparation, not provider exchanges. Do not consume the
+	// inference observer's budget or expose signed resource URLs through it.
+	ctx = context.WithValue(ctx, schemas.BifrostContextKeyHTTPExchangeObserver, schemas.HTTPExchangeObserverFactory(nil))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid resource URL %q: %w", redacted, sanitizeFetchError(err, redacted))
