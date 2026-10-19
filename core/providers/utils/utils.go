@@ -541,7 +541,9 @@ func (b *upstreamTimingBody) Close() error { return b.inner.Close() }
 func DoHTTPRequest(client *http.Client, req *http.Request) (*http.Response, error) {
 	var observer schemas.HTTPExchangeObserver
 	if factory, ok := req.Context().Value(schemas.BifrostContextKeyHTTPExchangeObserver).(schemas.HTTPExchangeObserverFactory); ok && factory != nil {
-		observer = factory()
+		if inner := factory(); inner != nil {
+			observer = &serializedExchangeObserver{inner: inner}
+		}
 	}
 	if observer != nil {
 		contentType, encoding := req.Header.Get("Content-Type"), req.Header.Get("Content-Encoding")
@@ -4870,6 +4872,39 @@ func regexGroupEnd(pattern string, start int) int {
 		}
 	}
 	return -1
+}
+
+// net/http may still read an upload after returning its response. Serialize both
+// directions together and make completion final for the entire exchange.
+type serializedExchangeObserver struct {
+	mu    sync.Mutex
+	inner schemas.HTTPExchangeObserver
+	done  bool
+}
+
+func (o *serializedExchangeObserver) Request(ct, ce string, b []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.done {
+		o.inner.Request(ct, ce, b)
+	}
+}
+
+func (o *serializedExchangeObserver) Response(status int, ct, ce string, b []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.done {
+		o.inner.Response(status, ct, ce, b)
+	}
+}
+
+func (o *serializedExchangeObserver) Done(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.done {
+		o.done = true
+		o.inner.Done(err)
+	}
 }
 
 // observedHTTPBody leaves ownership and cancellation with net/http's body.
